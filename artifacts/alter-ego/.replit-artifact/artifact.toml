@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "ALTER EGO"
+description = "A Minecraft-inspired personal digital twin that starts with a user profile questionnaire, remembers editable preferences locally, and helps the user plan their own goals and tasks through a villager guide and game-like decision scenarios."
+version = "1.0.0"
+id = "artifacts/alter-ego"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21115
+
+[services.development]
+run = "pnpm --filter @workspace/alter-ego run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/alter-ego", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/alter-ego/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21115"
+BASE_PATH = "/"

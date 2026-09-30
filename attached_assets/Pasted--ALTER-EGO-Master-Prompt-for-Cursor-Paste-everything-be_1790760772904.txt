@@ -1,0 +1,579 @@
+# ALTER EGO: Master Prompt for Cursor
+
+> Paste everything below into Cursor (Agent mode) with the `alter-ego` folder open.
+
+---
+
+## 0. READ THIS FIRST: how to work with me
+
+I have **zero coding knowledge**. I am fully depending on you to write all the code. Please:
+
+1. **Write and edit the files yourself.** Never tell me to "add this snippet somewhere". Create the files and put the code in them.
+2. **Work in phases** (listed in Section 6). Do ONE phase, then stop and tell me:
+   - what you built, in plain language (no jargon),
+   - the exact terminal commands to run it, and which folder to run them in,
+   - what I should see on screen if it worked.
+   Wait for me to reply "works" or paste an error before starting the next phase.
+3. **Give complete, runnable code.** No placeholders, no "rest of code here", no TODOs left for me.
+4. When I paste an error, explain the cause in one or two simple sentences, then fix it.
+5. Keep it simple. No unnecessary libraries, no microservices, no over-engineering. This is a 24-hour hackathon with 2 people, and a working end-to-end demo matters more than anything.
+6. Keep a `PROGRESS.md` file in the project root: what is built, what is left, how to run everything. Update it after every phase.
+7. Never hardcode secrets. The Gemini API key goes in `backend/.env` (as `GEMINI_API_KEY`), and `.env` goes in `.gitignore`.
+
+---
+
+## 1. Design direction (very important)
+
+The website must look like a **retro fighting game with a Minecraft-inspired theme**. It should feel like a game, **not** like an AI product.
+
+**The twin is a villager.** It has a pixel-art villager portrait and "speaks" in a game dialogue box, not chat bubbles.
+
+**Visual style:**
+- Chunky, bevelled stone-grey panels (dark border, light inner highlight top-left, dark inner shadow bottom-right), like Minecraft UI and inventory screens.
+- Pixel fonts: **"Press Start 2P"** for headings and buttons, **"VT323"** for body text (Google Fonts). Use `image-rendering: pixelated`.
+- Dark background (#1b1b1b) with subtle blurred or dim pixel-scene backdrops if easy. Stone-grey panels (#3a3a3a).
+- Accent colours: grass green #6fbf3a, gold #f2c94c, redstone red #d64541, diamond teal #4fd1c5, dirt brown #8b5a2b.
+- Title tabs on panels, pixel progress bars, small pixel icons (use simple CSS or SVG pixel art, or emoji as a fallback).
+- Button hover and press effects (button pushes down 2px on click, turns green on hover).
+- Small game touches: typewriter effect in the villager's dialogue box, a "LEVEL UP!" banner when the twin learns something, a "ROUND 1 / FIGHT" style intro when scenarios are generated, "BEST PATH" banner on the recommended reality.
+
+**Avoid the "AI-product" look:** no gradients, glassmorphism, glowing neon, sparkle icons, robot imagery, or chat-bubble UIs. Use the word "AI" sparingly. The villager says things.
+
+**Do NOT use** the official Minecraft logo, textures or copyrighted assets. It is "inspired by" only. The ALTER EGO title is text in the pixel font, and the villager is our own pixel art (SVG or CSS).
+
+**Feature-to-game mapping:**
+
+| Feature | Game version |
+|---|---|
+| Dashboard | **Village HQ**: villager portrait, stats, active quests, recent scenarios, evolution level |
+| Twin Identity | **Character sheet**: preferences, routines and goals as stat entries, editable |
+| Scenario Creator | **Choose your quest**: input for the what-if question and constraints |
+| Parallel Realities | **VS screen** (Reality A vs Reality B): pixel bars for time, workload and risk, plus a time-allocation chart. The recommended reality gets a **BEST PATH** banner. The villager explains in the dialogue box |
+| Twin Evolution | **LEVEL UP screen**: feedback input, then old vs new memory as an item swap, then the rerun scenario with old vs new recommendation side by side |
+| Privacy Control Centre | **Chest / Inventory**: memories shown as items, toggles for permissions, delete = "drop item", reset twin = **RESPAWN** |
+| Confidence | Hearts (♥♥♥ High, ♥♥♡ Medium, ♥♡♡ Low) plus a short explanation. **No percentages.** |
+
+Navigation: a pixel-style top bar or sidebar with the 6 pages. Layout should work on a laptop screen (for the demo) and not break on mobile.
+
+---
+
+## 2. Current state of the project
+
+I may already have a starter set up. Check the folder first, then keep, fix or replace as needed:
+
+- `alter-ego/backend/`: Python venv, and an `app.py` with a Flask `/api/health` endpoint (port 5000, CORS enabled).
+- `alter-ego/frontend/`: Vite + React + Tailwind (`@tailwindcss/vite`), with a proxy from `/api` to `http://localhost:5000` in `vite.config.js`, plus `recharts` and `react-router-dom` installed. A demo `App.jsx` and pixel-theme `index.css` may exist.
+
+If anything is missing or broken, fix it and tell me the commands to run. All backend routes should live under the `/api` prefix.
+
+---
+
+## 3. Architecture decisions (follow these)
+
+**Rule: Python decides, Gemini explains.**
+- Python (deterministic): available hours, deadline maths, time blocks, scoring, choosing the recommendation.
+- Gemini: parses free-text input and feedback into structured JSON, and writes the "why" explanations.
+- **Memory drives scoring.** Each stored memory has a key and value, and the scoring function reads them. When feedback changes `task_order` from `exam_first` to `assignment_first`, the score changes and the recommendation flips for a real, explainable reason, not because the LLM felt like it.
+- **Fallback:** if Gemini fails, times out or has no key, use keyword rules to parse feedback and templated text to explain results. The demo must never break.
+- Check the current recommended Gemini Flash model name in the official docs, and put it in `.env` as `GEMINI_MODEL`.
+
+**One Flask app and one React app.** The six layers are modules, not services:
+
+| Layer | Where it lives |
+|---|---|
+| 1 Twin Identity | `memories` table + `services/twin.py` |
+| 2 Context & Behaviour Engine | `services/context.py` |
+| 3 Parallel Reality Simulator | `services/simulator.py` |
+| 4 Twin Evolution | `/api/feedback` + `memory_history` table |
+| 5 Privacy Control Centre | `permissions` table + memory filtering |
+| 6 Confidence & Evidence | `services/confidence.py` (rule-based High / Medium / Low with reasons) |
+
+**Folder structure:**
+
+```
+alter-ego/
+├── PROGRESS.md
+├── backend/
+│   ├── app.py
+│   ├── db.py
+│   ├── schema.sql
+│   ├── seed.py              # fictional student data
+│   ├── services/
+│   │   ├── gemini.py        # parse_feedback(), explain() with fallbacks
+│   │   ├── context.py       # hours available, deadlines, conflicts
+│   │   ├── simulator.py     # build plans A/B, score them
+│   │   ├── twin.py          # get/update/delete memories, history
+│   │   └── confidence.py
+│   ├── requirements.txt
+│   └── .env
+└── frontend/
+    └── src/
+        ├── main.jsx, App.jsx, api.js
+        ├── pages/  Dashboard, Twin, Scenario, Realities, Evolution, Privacy
+        └── components/  NavBar, Villager, DialogueBox, RealityCard, PixelBar,
+                         TimeChart, MemoryList, MemoryDiff, ConfidenceHearts
+```
+
+**Database (SQLite):**
+
+```sql
+CREATE TABLE profile (
+  id INTEGER PRIMARY KEY, name TEXT, course TEXT,
+  goals TEXT,                -- JSON list
+  daily_hours_available REAL, focus_style TEXT
+);
+CREATE TABLE memories (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  key TEXT,                  -- e.g. task_order, session_style
+  value TEXT,                -- e.g. assignment_first, focused_blocks
+  category TEXT,             -- preference | routine | goal | decision
+  label TEXT,                -- human-readable sentence shown in UI
+  source TEXT,               -- initial | feedback | user_edit
+  active INTEGER DEFAULT 1,
+  updated_at TEXT
+);
+CREATE TABLE memory_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  memory_key TEXT, old_value TEXT, new_value TEXT,
+  reason TEXT, created_at TEXT
+);
+CREATE TABLE permissions (
+  category TEXT PRIMARY KEY, allowed INTEGER DEFAULT 1
+);
+CREATE TABLE tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT, type TEXT,     -- exam | assignment
+  due_at TEXT, est_hours REAL, done INTEGER DEFAULT 0
+);
+CREATE TABLE scenarios (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  question TEXT, created_at TEXT
+);
+CREATE TABLE scenario_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario_id INTEGER, result_json TEXT,
+  memory_snapshot TEXT,      -- JSON of memories used in this run
+  created_at TEXT
+);
+CREATE TABLE feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  scenario_id INTEGER, text TEXT, parsed_json TEXT, created_at TEXT
+);
+```
+
+`memory_snapshot` and `memory_history` are what make the evolution demo visible: Run 1 vs Run 2, with the exact memory change between them.
+
+**API (all under `/api`):**
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| GET | /health | Health check |
+| POST | /profile | Create or update profile |
+| GET | /twin | Profile + active memories + tasks + evolution level |
+| POST | /scenario | Generate and compare scenarios (A/B), recommendation, confidence, evidence |
+| POST | /feedback | Parse feedback, update memory, write history, **automatically rerun the scenario**, and return both the old and new runs |
+| GET | /memory | List memories |
+| PATCH | /memory/<id> | Edit a memory |
+| DELETE | /memory | Delete selected (`?id=`) or all memories |
+| GET/PATCH | /permissions | Read or toggle permissions per category |
+| POST | /reset | Reset the twin back to seed data |
+
+**Data flow for the demo loop:**
+1. `GET /twin` loads the profile, memories and tasks.
+2. `POST /scenario {question}` filters memories by permissions, computes hours, builds plans A and B, scores them with memory weights, asks Gemini for explanations, then returns realities, recommendation, confidence and evidence.
+3. `POST /feedback {scenario_id, text}`: Gemini extracts e.g. `{key: "task_order", value: "assignment_first"}`, the memory is updated, a history row is written, the scenario reruns, and the response contains the old run and the new run.
+4. The Evolution page shows the memory diff plus the old vs new recommendation.
+5. Privacy page: view, edit and delete memories, toggle permissions, reset.
+
+---
+
+## 4. The full project brief (original)
+
+# PROJECT: ALTER EGO: AI-Powered Digital Twin
+
+Act as an experienced full-stack developer, AI engineer, UI/UX designer, and hackathon mentor. Help me build a working, impressive prototype of **ALTER EGO** for a 24-hour hackathon.
+
+I am working with one teammate, so the solution must be realistic to build within 24 hours. Prioritise a functional end-to-end product over unnecessary complexity.
+
+## 4.1 Project Identity
+
+**Project Name:** ALTER EGO
+**Tagline:** Your Life. Your Choices. Your Parallel Realities.
+
+**Concept:**
+
+ALTER EGO is an AI-powered digital twin that learns about an individual through their permitted preferences, routines, goals, historical decisions, and feedback.
+
+It understands the user's current circumstances, identifies patterns, simulates alternative scenarios, and provides personalised decision support.
+
+Unlike a conventional chatbot that answers individual prompts, ALTER EGO builds an evolving representation of the person. It learns from corrections and real-life feedback, allowing its understanding and recommendations to improve over time.
+
+The user remains in control of their personal information through privacy settings, memory visibility, and data deletion.
+
+## 4.2 Problem Understanding
+
+Every decision shapes a different possibility, yet we rarely get to see where our choices might lead us.
+
+Existing digital assistants often provide generic advice but lack a deeper understanding of an individual's habits, goals, and changing circumstances.
+
+People need more than answers: they need an AI that understands them, explores possible outcomes, and evolves with their experiences.
+
+**ALTER EGO bridges this gap by creating a personalised digital twin that learns, simulates alternate realities, and helps individuals make informed decisions while keeping their personal data under their control.**
+
+## 4.3 Proposed Solution
+
+ALTER EGO creates a personalised digital representation of an individual using permitted personal information.
+
+It combines contextual awareness and behavioural intelligence to:
+
+* Understand the user's goals, habits, preferences, and routines.
+* Analyse their current situation, workload, deadlines, and constraints.
+* Simulate multiple what-if scenarios.
+* Compare potential outcomes, risks, and trade-offs.
+* Provide personalised recommendations with explanations.
+* Learn from user corrections and feedback.
+* Give users control over their data and stored memories.
+
+The system should not present hypothetical outcomes as guaranteed predictions. It should clearly communicate assumptions, uncertainty, and limitations.
+
+## 4.4 Six-Layer System Architecture
+
+Build the project around these six interconnected layers:
+
+### Layer 1: Twin Identity
+
+Creates the user's digital profile from permitted information:
+
+* Personal preferences
+* Goals and priorities
+* Daily routines
+* Learning or working style
+* Historical decisions
+* User-provided behavioural patterns
+
+The twin should have editable memory that the user can inspect and correct.
+
+### Layer 2: Context & Behaviour Engine
+
+Analyses the user's current situation:
+
+* Schedule and available time
+* Deadlines and tasks
+* Workload
+* Priorities
+* Dependencies and conflicts
+* Behavioural patterns
+
+It combines the user's profile with their present circumstances.
+
+### Layer 3: Parallel Reality Simulator
+
+This is the main feature of ALTER EGO.
+
+It allows users to explore different decisions through what-if scenarios.
+
+For example:
+"What if I study for my exam first instead of completing my assignment?"
+
+The simulator should:
+
+* Generate alternative plans or scenarios.
+* Compare their possible outcomes.
+* Identify risks and trade-offs.
+* Explain how each scenario aligns with the user's goals.
+* Display a personalised recommendation.
+
+Use deterministic calculations for factual values such as available hours and deadlines. Use AI to interpret the situation and explain the results. Do not rely entirely on an LLM to invent calculations or predictions.
+
+### Layer 4: Twin Evolution
+
+The twin should continuously adapt through:
+
+* User corrections
+* Feedback
+* Updated preferences
+* Changes in routines or goals
+* Actual outcomes, when provided by the user
+
+The system must visibly demonstrate that feedback changes the twin's stored understanding and can influence future recommendations.
+
+### Layer 5: Privacy Control Centre
+
+Users should have control over their personal data.
+
+Include:
+
+* Permission controls for information the twin can use.
+* A view of stored memories.
+* Ability to edit or delete memories.
+* Ability to reset the twin.
+* Clear indication of what information is being used.
+
+For the hackathon, use fictional sample data unless the user explicitly provides their own information.
+
+### Layer 6: Confidence & Evidence Layer
+
+Recommendations should be transparent.
+
+Show:
+
+* Why a recommendation was generated.
+* Which user preferences or contextual details influenced it.
+* Assumptions made.
+* Missing information.
+* Qualitative confidence levels such as High, Medium, or Low, with an explanation.
+
+Do not display arbitrary confidence percentages.
+
+## 4.5 Main Demonstration Scenario
+
+The main demo should use a fictional student profile.
+
+**Sample user situation:**
+
+A student has:
+
+* An exam tomorrow.
+* An assignment due tonight.
+* Limited available time.
+* A preference for studying in focused sessions.
+
+The student asks:
+
+"I have an exam tomorrow and an assignment due tonight. What should I prioritise?"
+
+### Initial Twin Response
+
+The twin analyses the profile and current situation, then generates two possible plans:
+
+**Reality A:** Prioritise exam preparation first.
+**Reality B:** Complete the assignment first, then study.
+
+Display a side-by-side comparison of:
+
+* Time allocation
+* Task completion
+* Workload
+* Potential risks
+* Alignment with the user's preferences
+
+The twin then provides a recommendation with reasoning.
+
+### The Important Feedback Moment
+
+The user corrects the twin:
+
+"I usually finish assignments first because unfinished work distracts me."
+
+ALTER EGO should then:
+
+1. Understand the correction.
+2. Update the user's stored behavioural preference.
+3. Display the updated memory.
+4. Rerun the same scenario.
+5. Show how the recommendation changes because of the new information.
+
+This visible feedback loop is the project's most important demonstration. Make it clear that the twin is evolving, not simply generating another chatbot response.
+
+**Note for the seed data:** the initial memory should say the student prefers `exam_first`, so the first recommendation is Reality A. After the correction, the memory becomes `assignment_first` and the recommendation flips to Reality B.
+
+## 4.6 Planned Technology Stack
+
+Use the following stack unless there is a strong technical reason to simplify it:
+
+**Frontend**
+
+* React.js
+* HTML, CSS, JavaScript
+* Tailwind CSS
+* Recharts for charts and comparisons
+
+**Backend**
+
+* Python
+* Flask
+* REST API endpoints
+
+**AI**
+
+* Gemini API for understanding user input, generating scenario explanations, and producing personalised recommendations.
+
+**Database**
+
+* SQLite for storing profiles, preferences, scenarios, and feedback.
+
+**Data Processing**
+
+* Python logic for time calculations, deadlines, workload, and scenario comparisons.
+* Pandas if structured data analysis is needed.
+
+**Development Tools**
+
+* Git and GitHub
+* VS Code / Cursor
+* Render or another suitable deployment platform
+
+Keep the architecture simple enough for a two-person team to complete in 24 hours.
+
+## 4.7 Suggested Backend API
+
+Create these endpoints:
+
+| Method | Endpoint  | Purpose                                |
+| ------ | --------- | -------------------------------------- |
+| POST   | /profile  | Create or update user profile          |
+| GET    | /twin     | Retrieve the current digital twin      |
+| POST   | /scenario | Generate and compare scenarios         |
+| POST   | /feedback | Process user feedback and update twin  |
+| GET    | /memory   | Retrieve stored memories               |
+| DELETE | /memory   | Delete selected or all stored memories |
+
+You may adjust these endpoints if a simpler structure is more practical (see Section 3 for the final list, all under `/api`).
+
+## 4.8 Frontend Pages and UI
+
+Create a modern, polished, futuristic but user-friendly interface.
+
+The design should feel like a personal control centre, not a generic chatbot. **(Styled per Section 1: a retro fighting game with a Minecraft-inspired theme and a villager twin.)**
+
+Suggested pages:
+
+### A. Dashboard
+
+* Welcome message.
+* Digital twin overview.
+* Current goals and preferences.
+* Recent scenarios.
+* Twin status or evolution indicator.
+
+### B. Twin Identity
+
+* User profile.
+* Preferences and behavioural patterns.
+* Stored memories.
+* Ability to edit or correct information.
+
+### C. Scenario Creator
+
+* Input field for a decision or what-if question.
+* Relevant context.
+* Option to select or enter constraints.
+
+### D. Parallel Realities
+
+* Two or more scenario cards.
+* Side-by-side comparison.
+* Visual time allocation.
+* Risks and trade-offs.
+* Recommendation and explanation.
+
+### E. Twin Evolution
+
+* User feedback interface.
+* Before-and-after memory comparison.
+* Visible indication of what changed.
+* Ability to rerun a previous scenario.
+
+### F. Privacy Control Centre
+
+* Memory visibility.
+* Permission toggles.
+* Edit/delete controls.
+* Reset twin option.
+
+Prioritise the dashboard, scenario creator, parallel realities, and visible feedback loop. Other pages can be simplified if time is limited.
+
+## 4.9 Important Functional Requirements
+
+The prototype must demonstrate the following complete flow:
+
+1. User opens ALTER EGO.
+2. User sees or creates a sample digital twin.
+3. User enters a decision.
+4. The system analyses the user's context.
+5. The system generates multiple possible scenarios.
+6. The user sees a comparison and recommendation.
+7. The user corrects the twin.
+8. The twin updates its memory.
+9. The same scenario is rerun.
+10. The recommendation changes based on the updated memory.
+11. The user can inspect or delete the stored memory.
+
+The application should feel connected. Avoid building separate screens that do not communicate with each other.
+
+## 4.10 Edge Cases to Handle
+
+* Missing information: ask for clarification or state assumptions.
+* Conflicting information: identify the conflict and ask the user to confirm.
+* Ambiguous requests: ask follow-up questions.
+* Changed deadlines or schedules: recalculate affected scenarios.
+* User disagrees with a recommendation: accept relevant corrections and update the twin.
+* Revoked permission: stop using the restricted information.
+* API failure: provide a graceful fallback using sample data or rule-based logic.
+
+## 4.11 What Makes ALTER EGO Original
+
+The key innovation is shifting AI from answering:
+
+"What should I do?"
+
+to exploring:
+
+"What could happen if I do this?"
+
+ALTER EGO combines personal behavioural intelligence, parallel reality simulation, and continuous evolution into one system.
+
+It does not simply provide generic advice. It explores possible futures based on the individual's circumstances and preferences, while making its reasoning transparent and keeping the user in control.
+
+## 4.12 24-Hour Hackathon Priorities
+
+We have only 24 hours and two people. Prioritise realistically. The feedback-driven evolution feature must be prioritised over decorative features.
+
+Suggested schedule:
+
+* Hours 0-2: Finalise architecture, features, and UI flow.
+* Hours 2-6: Build frontend screens and navigation.
+* Hours 6-10: Build Flask backend and database.
+* Hours 10-14: Integrate AI and scenario comparison.
+* Hours 14-17: Implement feedback and visible twin updates.
+* Hours 17-20: Add privacy, confidence, and UI polish.
+* Hours 20-22: Test the complete flow and fix bugs.
+* Hours 22-24: Prepare presentation, demo script, and backup.
+
+---
+
+## 5. Rules
+
+* Do not overcomplicate the project.
+* Do not introduce unnecessary technologies.
+* Do not build the six layers as separate microservices.
+* Keep the AI and backend logic understandable, with short plain-English comments in the code.
+* Use a consistent data structure across frontend, backend and database (same field names everywhere).
+* Make the interface visually impressive but functional.
+* Prioritise a working end-to-end demo.
+* If a feature is too ambitious for 24 hours, build a simpler version without losing the core concept.
+* Never present outcomes as guaranteed predictions. Always show assumptions and uncertainty.
+
+---
+
+## 6. Build phases (do one at a time and wait for me after each)
+
+**Phase 1: Backend foundation.** `schema.sql`, `db.py`, `seed.py` (fictional student "Alex" with an exam tomorrow, an assignment due tonight, about 6 free hours, focused-session preference, initial `task_order = exam_first`), and `GET /api/twin`. Include a way to reset and reseed the DB.
+
+**Phase 2: Simulator (no AI yet).** `context.py`, `simulator.py`, `confidence.py`, and `POST /api/scenario`. Deterministic time-block plans for Reality A and B, and scoring driven by memories. Include a small test script (`python test_flow.py`) that prints Run 1, then simulates the feedback, then prints Run 2, so I can see the recommendation flip in the terminal.
+
+**Phase 3: Feedback loop.** `twin.py`, `POST /api/feedback` with rule-based parsing first, memory update, history row, automatic rerun, and the old and new runs in the response. Add the memory, permissions and reset endpoints.
+
+**Phase 4: Gemini.** `gemini.py` to parse feedback into structured JSON and write explanations, with the fallback kept. Read the key from `.env`. The app must still work with no key.
+
+**Phase 5: Frontend shell and theme.** Pixel theme, nav bar, routing, the Villager component, the DialogueBox with typewriter effect, and the `api.js` helper. Dashboard connected to `/api/twin`.
+
+**Phase 6: Core demo screens.** Scenario Creator, Parallel Realities (VS screen with pixel bars and a Recharts time-allocation chart, BEST PATH banner, confidence hearts, evidence panel), and Evolution (feedback input, LEVEL UP, memory diff, old vs new recommendation, rerun button). The full loop must work end to end.
+
+**Phase 7: Twin Identity and Privacy pages.** Character sheet with editable memories, Chest/Inventory with permission toggles, delete and edit, and RESPAWN (reset). Revoking a permission must actually change the next scenario run.
+
+**Phase 8: Polish and edge cases.** Loading and error states, missing-info clarification, changed deadlines, API-failure fallback, sounds or animations only if cheap. Then write `PROGRESS.md` with how to run the whole thing, and a **3-minute demo script** for the hackathon presentation, plus a "backup plan" if the internet or Gemini fails.
+
+---
+
+**Start with a quick check of the current folder, then do Phase 1 only.** When done, tell me the commands to run and what I should see.
