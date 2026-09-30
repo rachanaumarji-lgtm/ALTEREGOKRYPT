@@ -1,0 +1,1 @@
+- [Scenario forecast calibration](scenario-forecasting.md) — Keep probability claims qualitative until forecasts are backed by outcome data or a validated model.
