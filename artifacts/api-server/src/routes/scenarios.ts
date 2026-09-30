@@ -96,6 +96,10 @@ router.get("/scenarios/status", (_req, res) => {
   res.json({ configured: Boolean(process.env.GEMINI_API_KEY?.trim()) });
 });
 
+router.get("/ai/status", (_req, res) => {
+  res.json({ configured: Boolean(process.env.GEMINI_API_KEY?.trim()) });
+});
+
 router.post("/scenarios/analyze", async (req, res) => {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) {

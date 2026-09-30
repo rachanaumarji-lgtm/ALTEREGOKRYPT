@@ -1,5 +1,5 @@
 import './alter-ego.css';
-import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useRef, useState } from 'react';
 import { Link, Route, Switch, useLocation } from 'wouter';
 
 type Profile = {
@@ -38,9 +38,10 @@ type Scenario = {
 };
 type Category = 'profile' | 'interests' | 'routine' | 'skills' | 'personality' | 'goals' | 'tasks' | 'feedback';
 type Memory = { id: string; category: Category; label: string; value: string; enabled: boolean };
+type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string; createdAt: string };
 type Feedback = { id: string; scenarioId: string; actualOutcome: string; correction: string; createdAt: string };
 type AppData = {
-  profile: Profile | null; tasks: UserTask[]; scenarios: Scenario[]; memories: Memory[];
+  profile: Profile | null; tasks: UserTask[]; scenarios: Scenario[]; memories: Memory[]; chat: ChatMessage[];
   permissions: Record<Category, boolean>; feedback: Feedback[];
 };
 const STORE_KEY = 'alter-ego-village-v1';
@@ -58,14 +59,23 @@ const emptyPermissions = (): Record<Category, boolean> => ({
   profile: true, interests: true, routine: true, skills: true, personality: true, goals: true, tasks: true, feedback: true,
 });
 const emptyData = (): AppData => ({
-  profile: null, tasks: [], scenarios: [], memories: [], permissions: emptyPermissions(), feedback: [],
+  profile: null, tasks: [], scenarios: [], memories: [], chat: [], permissions: emptyPermissions(), feedback: [],
 });
 function readData(): AppData {
   try {
     const raw = localStorage.getItem(STORE_KEY);
     if (!raw) return emptyData();
     const parsed = JSON.parse(raw) as Partial<AppData>;
-    return { ...emptyData(), ...parsed, permissions: { ...emptyPermissions(), ...parsed.permissions } };
+    const chat = Array.isArray(parsed.chat)
+      ? parsed.chat.filter((message): message is ChatMessage =>
+          typeof message === 'object' && message !== null &&
+          typeof message.id === 'string' &&
+          (message.role === 'user' || message.role === 'assistant') &&
+          typeof message.content === 'string' &&
+          typeof message.createdAt === 'string',
+        ).slice(-80)
+      : [];
+    return { ...emptyData(), ...parsed, chat, permissions: { ...emptyPermissions(), ...parsed.permissions } };
   } catch { return emptyData(); }
 }
 function id() { return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`; }
@@ -102,12 +112,12 @@ function Shell({ children, data }: { children: ReactNode; data: AppData }) {
   const [path] = useLocation();
   const links = [
     ['/', 'Village HQ', '01'], ['/quests', 'Quest log', '02'], ['/scenarios', 'What if…', '03'],
-    ['/twin', 'Your twin', '04'], ['/evolution', 'Evolution', '05'], ['/privacy', 'Privacy', '06'],
+    ['/twin', 'Your twin', '04'], ['/chat', 'AI chat', '05'], ['/evolution', 'Evolution', '06'], ['/privacy', 'Privacy', '07'],
   ];
   return <div className="app-shell">
     <aside className="side-rail">
       <Link href="/" className="brand-lockup"><BrandMark /><span><strong>ALTER EGO</strong><small>YOUR OWN SIDEKICK</small></span></Link>
-      <div className="rail-label">FIELD GUIDE <span>— 06</span></div>
+      <div className="rail-label">FIELD GUIDE <span>— 07</span></div>
       <nav aria-label="Main navigation" className="rail-nav">
         {links.map(([href, label, n]) => <Link key={href} href={href} className={`nav-link ${path === href ? 'active' : ''}`} data-testid={`link-nav-${label.toLowerCase().replaceAll(' ', '-')}`}>
           <span className="nav-number">{n}</span><span>{label}</span>{path === href && <span className="nav-caret">›</span>}
@@ -179,7 +189,7 @@ function HomePage({ data, navigate }: { data: AppData; navigate: (url: string) =
   const name = data.profile?.name?.trim();
   return <div className="home-page enter-up"><div className="home-title"><div><div className="eyebrow"><span className="eyebrow-mark">HQ</span> YOUR VILLAGE / DAY {Math.max(1, data.scenarios.length + data.tasks.length + 1).toString().padStart(2, '0')}</div><h1>{name ? `Good to have you, ${name}.` : 'Your village, your pace.'}</h1><p>A small place to sort through the real stuff.</p></div><div className="rank-badge"><span>VILLAGE RANK</span><b>{data.scenarios.length + data.feedback.length > 3 ? 'FIELD HAND' : 'NEWCOMER'}</b><i>{'◆'.repeat(Math.min(5, Math.max(1, data.feedback.length + 1)))}<span>{'◇'.repeat(Math.max(0, 5 - data.feedback.length - 1))}</span></i></div></div>
     <PixelLandscape />
-    <div className="home-grid"><section className="welcome-card pixel-panel"><div className="welcome-top"><span className="card-kicker">VILLAGER ON DUTY</span><span className="status-tag"><i /> HERE</span></div><div className="welcome-center"><PixelVillager /><div><h2>Ready when you are.</h2><p>Your twin works from what you've shared—not from guesses about everyone else.</p></div></div><Dialogue label="FIELD NOTE">Got a decision rattling around? We can walk through two possible paths. No fortune-telling, just a useful second look.</Dialogue><button className="button button-accent" onClick={() => navigate('/scenarios')} data-testid="button-open-scenario">THINK THROUGH A WHAT-IF <span>→</span></button></section>
+    <div className="home-grid"><section className="welcome-card pixel-panel"><div className="welcome-top"><span className="card-kicker">VILLAGER ON DUTY</span><span className="status-tag"><i /> HERE</span></div><div className="welcome-center"><PixelVillager /><div><h2>Ready when you are.</h2><p>Your twin works from what you've shared—not from guesses about everyone else.</p></div></div><Dialogue label="FIELD NOTE">Got a decision rattling around? We can walk through two possible paths. No fortune-telling, just a useful second look.</Dialogue><div className="welcome-actions"><button className="button button-accent" onClick={() => navigate('/scenarios')} data-testid="button-open-scenario">THINK THROUGH A WHAT-IF <span>→</span></button><button className="button button-outline" onClick={() => navigate('/chat')}>ASK A QUESTION</button></div></section>
       <section className="quest-summary pixel-panel"><div className="section-line"><span className="card-kicker">YOUR QUEST BOARD</span><Link href="/quests">OPEN LOG →</Link></div><div className="quest-count"><b>{openTasks.length.toString().padStart(2, '0')}</b><span>OPEN<br />QUESTS</span><div className="mini-divider" /><b>{finished.toString().padStart(2, '0')}</b><span>DONE</span></div>{openTasks.length ? <div className="mini-task-list">{openTasks.slice(0, 2).map((task) => <div key={task.id}><span className="empty-box" />{task.title}</div>)}</div> : <p className="empty-quiet">Your board is clear. Add a quest when something needs a spot.</p>}<button className="button button-outline" onClick={() => navigate('/quests')}>+ ADD YOUR FIRST QUEST</button></section></div>
     <div className="home-bottom"><div><span className="card-kicker">RECENTLY IN THE VILLAGE</span>{data.scenarios.length ? <p className="recent-line"><span className="tiny-square" /> Latest what-if: <b>{data.scenarios[data.scenarios.length - 1].question}</b><Link href="/scenarios">REVISIT →</Link></p> : <p className="empty-quiet">No scenarios yet. Your first one starts with a question.</p>}</div><div className="memory-meter"><span className="card-kicker">YOUR TWIN REMEMBERS</span><b>{data.memories.filter((item) => item.enabled && data.permissions[item.category]).length} <small>details in use</small></b><Link href="/twin">EDIT WHAT IT KNOWS →</Link></div></div>
   </div>;
@@ -633,24 +643,166 @@ function EvolutionPage({ data, update }: { data: AppData; update: (next: AppData
       setRerunning(false);
     }
   };
-  return <div><SectionHead index="05" eyebrow="EVOLUTION / FIELD NOTES" title="Real life is the best patch note." description="When a what-if meets the real world, tell your twin what it got wrong. A useful correction can change what it recommends next time." />
+  return <div><SectionHead index="06" eyebrow="EVOLUTION / FIELD NOTES" title="Real life is the best patch note." description="When a what-if meets the real world, tell your twin what it got wrong. A useful correction can change what it recommends next time." />
     <Dialogue>I'm allowed to be wrong. The important bit is whether I remember what you tell me afterward.</Dialogue>
     <div className="evolution-layout"><section className="evolution-card pixel-panel"><div className="card-kicker">YOUR CURRENT CORRECTION</div><h2>What should your twin keep in mind?</h2><p>This one memory can be revised or removed at any time. It only shapes scenarios while the Corrections permission is on.</p><form onSubmit={save}><label className="field"><span>REMEMBER THIS ABOUT MY EXPERIENCE</span><textarea value={nextValue} onChange={(e) => { setNextValue(e.target.value); setSaved(false); }} rows={4} placeholder="For instance: I tend to underestimate the recovery time after a busy week." data-testid="input-evolution-memory" /><small>Feedback from a scenario is also saved here automatically. Edit it in your own words.</small></label><button className="button button-primary" type="submit">SAVE MEMORY CHANGE <span>→</span></button>{saved && <span className="save-confirm" role="status">Saved in your browser. Your next rerun can use this.</span>}</form></section>
       <aside className="evolution-side"><div className="old-new"><span className="card-kicker">MEMORY, MADE VISIBLE</span><div className="memory-change"><small>BEFORE / THIS WAS ON THE MAP</small><p>{memory?.value || 'No correction saved yet.'}</p></div><div className="change-arrow">↓</div><div className="memory-change memory-new"><small>NOW / YOUR TWIN WILL USE</small><p>{nextValue || 'No correction saved yet.'}</p></div></div><div className="feedback-log"><span className="card-kicker">REAL-WORLD NOTES</span>{data.feedback.length ? [...data.feedback].reverse().map((item) => <article key={item.id}><small>{new Date(item.createdAt).toLocaleDateString()}</small><b>{data.scenarios.find((scenario) => scenario.id === item.scenarioId)?.question ?? 'Earlier what-if'}</b><p>{item.actualOutcome || item.correction}</p></article>) : <p className="empty-quiet">No real-world notes yet. Add one from a scenario walk-through.</p>}</div></aside></div>
     <section className="rerun-panel"><div><span className="card-kicker">PUT THE NEW MEMORY TO WORK</span><h2>Revisit an old what-if.</h2><p>Rerun a saved scenario with your current profile and enabled memories.</p></div>{analysisError && <p className="analysis-error" role="alert">{analysisError}</p>}{data.scenarios.length ? <div className="rerun-list">{data.scenarios.slice().reverse().map((scenario) => <div className="rerun-item" key={scenario.id}><span>{scenario.question}</span><button className="button button-outline" onClick={() => void rerun(scenario)} disabled={rerunning} data-testid={`button-evolution-rerun-${scenario.id}`}>{rerunning ? 'ANALYZING…' : rerunId === scenario.id ? 'UPDATED ✓' : 'RERUN →'}</button></div>)}</div> : <div className="quiet-box">You haven't saved a what-if yet. Write one in <Link href="/scenarios">the scenario gate →</Link></div>}</section>
   </div>;
 }
+function ChatPage({ data, update }: { data: AppData; update: (next: AppData) => void }) {
+  const [draft, setDraft] = useState('');
+  const [includeMemories, setIncludeMemories] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState('');
+  const [error, setError] = useState('');
+  const [geminiConfigured, setGeminiConfigured] = useState<boolean | null>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    fetch('/api/ai/status')
+      .then((response) => response.ok ? response.json() : null)
+      .then((result: unknown) => {
+        if (active && typeof result === 'object' && result !== null && 'configured' in result) {
+          setGeminiConfigured(result.configured === true);
+        }
+      })
+      .catch(() => { if (active) setGeminiConfigured(false); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    if (transcript) transcript.scrollTop = transcript.scrollHeight;
+  }, [data.chat, pendingMessage, isSending]);
+
+  const send = async (event: FormEvent) => {
+    event.preventDefault();
+    const prompt = draft.trim();
+    if (!prompt || isSending) return;
+    setIsSending(true);
+    setPendingMessage(prompt);
+    setDraft('');
+    setError('');
+
+    const messages = [
+      ...data.chat.slice(-18).map(({ role, content }) => ({ role, content })),
+      { role: 'user' as const, content: prompt },
+    ];
+    const context = includeMemories
+      ? data.memories
+          .filter((memory) => memory.enabled && data.permissions[memory.category])
+          .slice(0, 16)
+          .map(({ category, label, value }) => ({ category, label, value: value.slice(0, 1_000) }))
+      : [];
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages, context }),
+      });
+      const result: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const message = typeof result === 'object' && result !== null && 'error' in result && typeof result.error === 'string'
+          ? result.error
+          : 'AI chat is temporarily unavailable. Please try again.';
+        throw new Error(message);
+      }
+      if (typeof result !== 'object' || result === null || !('reply' in result) || typeof result.reply !== 'string' || !result.reply.trim()) {
+        throw new Error('Gemini returned an empty reply. Please try again.');
+      }
+
+      const now = new Date().toISOString();
+      const nextMessages: ChatMessage[] = [
+        ...data.chat,
+        { id: id(), role: 'user' as const, content: prompt, createdAt: now },
+        { id: id(), role: 'assistant' as const, content: result.reply.trim(), createdAt: new Date().toISOString() },
+      ].slice(-80);
+      update({ ...data, chat: nextMessages });
+      setPendingMessage('');
+    } catch (sendError) {
+      setDraft(prompt);
+      setPendingMessage('');
+      setError(sendError instanceof Error ? sendError.message : 'AI chat failed. Please try again.');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const clearChat = () => {
+    if (!data.chat.length || isSending) return;
+    if (window.confirm('Clear this chat from this browser?')) update({ ...data, chat: [] });
+  };
+  const enabledMemoryCount = data.memories.filter((memory) => memory.enabled && data.permissions[memory.category]).length;
+
+  return <div className="chat-page">
+    <SectionHead index="05" eyebrow="OPEN CHAT" title="Ask about anything." description="A general-purpose AI sidekick for questions, ideas, explanations, and plans. It only responds when you message it." />
+    <div className={`gemini-status ${geminiConfigured ? 'is-ready' : ''}`} role="status">
+      <span className="gemini-status-mark">{geminiConfigured ? '✓' : geminiConfigured === false ? '!' : '…'}</span>
+      <div>
+        <b>{geminiConfigured ? 'GEMINI READY' : geminiConfigured === false ? 'ADD YOUR GEMINI KEY' : 'CHECKING GEMINI'}</b>
+        <p>{geminiConfigured
+          ? 'Your key is stored as a Replit Secret and used by the app server only.'
+          : geminiConfigured === false
+            ? 'Add GEMINI_API_KEY through Replit’s secure Secrets form to enable chat.'
+            : 'Checking whether a Gemini key is available.'}</p>
+      </div>
+    </div>
+    <section className="chat-card pixel-panel" aria-label="AI conversation">
+      <div className="chat-toolbar">
+        <div><span className="card-kicker">YOUR CONVERSATION</span><small>Saved only in this browser</small></div>
+        <button className="close-text" type="button" onClick={clearChat} disabled={!data.chat.length || isSending}>CLEAR CHAT ×</button>
+      </div>
+      <div className="chat-transcript" ref={transcriptRef} role="log" aria-live="polite" aria-relevant="additions text">
+        {!data.chat.length && !pendingMessage && <div className="chat-empty">
+          <PixelVillager small />
+          <h2>What’s on your mind?</h2>
+          <p>Ask for an explanation, brainstorm an idea, work through a problem, or get help making a plan.</p>
+          <div className="chat-starters">
+            {['Explain a tricky idea in plain language', 'Help me plan a manageable week', 'Brainstorm a few fresh ideas'].map((suggestion) =>
+              <button key={suggestion} type="button" onClick={() => setDraft(suggestion)} disabled={isSending}>{suggestion} <span>→</span></button>,
+            )}
+          </div>
+        </div>}
+        {data.chat.map((message) => <article key={message.id} className={`chat-message chat-message-${message.role}`}>
+          <span>{message.role === 'assistant' ? 'ALTER EGO' : 'YOU'}</span>
+          <p>{message.content}</p>
+        </article>)}
+        {pendingMessage && <article className="chat-message chat-message-user"><span>YOU</span><p>{pendingMessage}</p></article>}
+        {isSending && <div className="chat-thinking" role="status"><span className="thinking-pixels"><i /><i /><i /></span> THINKING…</div>}
+      </div>
+      {error && <p className="analysis-error" role="alert">{error}</p>}
+      <form className="chat-composer" onSubmit={(event) => void send(event)}>
+        <label className="chat-input-label" htmlFor="chat-message">YOUR MESSAGE</label>
+        <textarea id="chat-message" value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={6_000} rows={3} placeholder="Ask a question or describe what you want help with…" disabled={isSending} />
+        <div className="chat-compose-bottom">
+          <label className="chat-memory-option">
+            <input type="checkbox" checked={includeMemories} onChange={(event) => setIncludeMemories(event.target.checked)} disabled={isSending || enabledMemoryCount === 0} />
+            <span>Personalize with my enabled details <small>{enabledMemoryCount ? `${enabledMemoryCount} available · only sent when selected` : 'No enabled details to share'}</small></span>
+          </label>
+          <button className="button button-primary" type="submit" disabled={!draft.trim() || isSending} data-testid="button-send-chat">
+            {isSending ? 'THINKING…' : 'SEND'} <span>→</span>
+          </button>
+        </div>
+        <p className="chat-disclosure">Your message goes to Google Gemini through the app server. Recent chat turns are sent for context; saved profile details are sent only when you check the option above.</p>
+      </form>
+    </section>
+  </div>;
+}
+
 function PrivacyPage({ data, update, reset }: { data: AppData; update: (next: AppData) => void; reset: () => void }) {
   const [editingId, setEditingId] = useState<string | null>(null); const [draft, setDraft] = useState(''); const [confirm, setConfirm] = useState(false);
   const togglePermission = (category: Category, enabled: boolean) => update({ ...data, permissions: { ...data.permissions, [category]: enabled } });
   const removeMemory = (memory: Memory) => { if (window.confirm(`Delete the remembered detail “${memory.label}”?`)) update({ ...data, memories: data.memories.filter((item) => item.id !== memory.id) }); };
   const saveMemory = (memory: Memory) => { update({ ...data, memories: data.memories.map((item) => item.id === memory.id ? { ...item, value: draft } : item) }); setEditingId(null); };
-  return <div><SectionHead index="06" eyebrow="PRIVACY & CONTROL" title="Your save stays on this device." description="Your profile and history live in this browser. Scenario analysis makes a secure server request to Gemini only when you submit or rerun a what-if." />
+  return <div><SectionHead index="07" eyebrow="PRIVACY & CONTROL" title="Your save stays on this device." description="Your profile and history live in this browser. Gemini receives a request only when you choose to use an AI feature." />
     <Dialogue>You're the gatekeeper. Turn a category off to keep it out of scenario suggestions, edit a memory to correct it, or clear the whole save file.</Dialogue>
-    <div className="privacy-notice pixel-panel"><div className="notice-lock">LOCAL<br />SAVE</div><div><span className="card-kicker">LOCAL DATA + GEMINI ANALYSIS</span><p>Your profile, quest log, scenarios, feedback, and memories stay in this browser. When you submit or rerun a what-if, the question and only enabled memories/unfinished tasks are sent through the app server to Google Gemini for analysis. Your Gemini API key stays in Replit Secrets and is never sent to the browser. Turn off categories below to exclude them.</p><Link href="/twin">Review your profile →</Link></div></div>
+    <div className="privacy-notice pixel-panel"><div className="notice-lock">LOCAL<br />SAVE</div><div><span className="card-kicker">LOCAL DATA + GEMINI</span><p>Your profile, quest log, scenarios, chat history, feedback, and memories stay in this browser. When you use AI chat, recent chat turns are sent through the app server to Google Gemini; saved profile details are included only if you select that option. Scenario requests send the question and enabled memories. Your Gemini API key stays in Replit Secrets and is never sent to the browser. Clear the chat or your local save whenever you want.</p><Link href="/twin">Review your profile →</Link></div></div>
     <section className="permission-section"><div className="privacy-heading"><div><span className="card-kicker">CATEGORY PERMISSIONS</span><h2>What may your twin use?</h2></div><span className="permission-count">{Object.values(data.permissions).filter(Boolean).length} / {categories.length} ON</span></div>{categories.map((category) => <label key={category.key} className="permission-row"><div><b>{category.label}</b><small>{category.hint}</small></div><input type="checkbox" checked={data.permissions[category.key]} onChange={(e) => togglePermission(category.key, e.target.checked)} data-testid={`toggle-permission-${category.key}`} /><span className="toggle-track" aria-hidden="true"><i /></span></label>)}</section>
     <section className="memory-section"><div className="privacy-heading"><div><span className="card-kicker">MEMORY CABINET</span><h2>Look at what's remembered.</h2></div><span className="permission-count">{data.memories.length} DETAILS</span></div>{data.memories.length ? <div className="memory-list">{data.memories.map((memory) => <article key={memory.id} className={`memory-row ${!memory.enabled || !data.permissions[memory.category] ? 'memory-paused' : ''}`}><div className="memory-indicator">{memory.enabled && data.permissions[memory.category] ? 'IN USE' : 'PAUSED'}</div><div className="memory-content"><span>{memory.label} <small>· {categories.find((category) => category.key === memory.category)?.label}</small></span>{editingId === memory.id ? <div className="memory-edit"><textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} data-testid={`input-memory-${memory.id}`} /><button onClick={() => saveMemory(memory)}>SAVE</button><button onClick={() => setEditingId(null)}>CANCEL</button></div> : <p>{memory.value}</p>}</div><div className="memory-actions">{editingId !== memory.id && <><button onClick={() => { setEditingId(memory.id); setDraft(memory.value); }} data-testid={`button-edit-memory-${memory.id}`}>EDIT</button><button onClick={() => removeMemory(memory)} data-testid={`button-delete-memory-${memory.id}`}>DELETE</button><button onClick={() => update({ ...data, memories: data.memories.map((item) => item.id === memory.id ? { ...item, enabled: !item.enabled } : item) })}>{memory.enabled ? 'PAUSE' : 'USE'}</button></>}</div></article>)}</div> : <div className="quiet-box">No stored memories yet. Memories come from the profile details you share and corrections you choose to keep.</div>}</section>
-    <section className="reset-zone"><div><span className="card-kicker">START OVER</span><h2>Clear your local save.</h2><p>This removes your profile, quests, scenarios, feedback, memories, and permissions from this browser. This cannot be undone.</p></div>{confirm ? <div className="confirm-reset"><b>Clear everything from this browser?</b><button className="button button-danger" onClick={reset} data-testid="button-confirm-reset">YES, CLEAR THE SAVE</button><button className="button button-quiet" onClick={() => setConfirm(false)}>KEEP MY SAVE</button></div> : <button className="button button-danger-outline" onClick={() => setConfirm(true)} data-testid="button-reset-data">CLEAR ALL LOCAL DATA</button>}</section>
+    <section className="reset-zone"><div><span className="card-kicker">START OVER</span><h2>Clear your local save.</h2><p>This removes your profile, quests, scenarios, chat history, feedback, memories, and permissions from this browser. This cannot be undone.</p></div>{confirm ? <div className="confirm-reset"><b>Clear everything from this browser?</b><button className="button button-danger" onClick={reset} data-testid="button-confirm-reset">YES, CLEAR THE SAVE</button><button className="button button-quiet" onClick={() => setConfirm(false)}>KEEP MY SAVE</button></div> : <button className="button button-danger-outline" onClick={() => setConfirm(true)} data-testid="button-reset-data">CLEAR ALL LOCAL DATA</button>}</section>
   </div>;
 }
 function NotFoundPage() { return <div className="not-found"><span className="eyebrow">LOST ON THE PATH</span><h1>That trail ends here.</h1><Link href="/" className="button button-primary">BACK TO THE VILLAGE →</Link></div>; }
@@ -666,6 +818,7 @@ function App() {
     <Route path="/quests"><QuestPage data={data} update={update} /></Route>
     <Route path="/scenarios"><ScenarioPage data={data} update={update} /></Route>
     <Route path="/twin"><TwinPage data={data} update={update} /></Route>
+    <Route path="/chat"><ChatPage data={data} update={update} /></Route>
     <Route path="/evolution"><EvolutionPage data={data} update={update} /></Route>
     <Route path="/privacy"><PrivacyPage data={data} update={update} reset={reset} /></Route>
     <Route component={NotFoundPage} />
