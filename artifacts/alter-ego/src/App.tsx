@@ -32,7 +32,7 @@ type ScenarioPath = {
 };
 type Scenario = {
   id: string; question: string; constraints: string; alternatives: string[];
-  recommendedPath: string; confidenceLevel: Confidence; explanation: string;
+  recommendedPath: string; recommendationReason?: string; confidenceLevel: Confidence; explanation: string;
   assumptions: string[]; createdAt: string; paths?: ScenarioPath[]; analysisSummary?: string;
   choiceOne?: string; choiceTwo?: string;
 };
@@ -229,10 +229,59 @@ function readChoices(question: string, choiceOne: string, choiceTwo: string) {
   if (pair.length === 2) return { one: cleanChoice(pair[0]), two: cleanChoice(pair[1]), explicit: true };
   const between = cleaned.match(/^between\s+(.+?)\s+and\s+(.+)$/i);
   if (between) return { one: cleanChoice(between[1]), two: cleanChoice(between[2]), explicit: true };
-  const topic = cleanChoice(cleaned.replace(/^(?:if|whether)\s+/i, '')) || 'this change';
+  const area = classifyDecision(question);
+  if (area === 'wellbeing' && /\b(gym|workout|work out|exercise|fitness|running|run)\b/i.test(question)) {
+    return {
+      one: 'Go to the gym for one short, pre-planned session',
+      two: 'Skip the gym commute and try a short workout or walk at home',
+      explicit: false,
+    };
+  }
+  if (area === 'wellbeing') {
+    return {
+      one: 'Make one small change to your routine this week',
+      two: 'Keep your routine steady and try a lower-effort alternative first',
+      explicit: false,
+    };
+  }
+  if (area === 'work') {
+    return {
+      one: 'Move ahead with the work change you are considering',
+      two: 'Keep your current setup while you check the new option first',
+      explicit: false,
+    };
+  }
+  if (area === 'money') {
+    return {
+      one: 'Go ahead after checking the full cost',
+      two: 'Wait and compare the cost with a lower-commitment alternative',
+      explicit: false,
+    };
+  }
+  if (area === 'relationships') {
+    return {
+      one: 'Bring it up in a direct, low-pressure conversation',
+      two: 'Take time to clarify what you need before starting the conversation',
+      explicit: false,
+    };
+  }
+  if (area === 'learning') {
+    return {
+      one: 'Start with a short learning session this week',
+      two: 'Try a free lesson or sample before making a bigger commitment',
+      explicit: false,
+    };
+  }
+  if (area === 'location') {
+    return {
+      one: 'Plan a short visit to test the change in real life',
+      two: 'Stay put for now while you check the costs and logistics',
+      explicit: false,
+    };
+  }
   return {
-    one: `Move forward with ${topic}`,
-    two: `Keep things as they are and test ${topic} in a smaller way`,
+    one: 'Take a direct first step to address the situation',
+    two: 'Keep things steady and test a smaller, reversible alternative first',
     explicit: false,
   };
 }
@@ -241,7 +290,7 @@ function classifyDecision(value: string) {
   if (/\b(jobs?|career|quit|resign|manager|business|client|shift|employer|workplace|promotion)\b|\bwork\s+(?:offer|schedule|hours|contract|role)\b/i.test(value)) return 'work';
   if (/\b(friend|partner|relationship|date|family|mum|mom|dad|parent|tell them|talk to)\b/i.test(value)) return 'relationships';
   if (/\b(study|learn|course|college|school|practice|exam|class|skill)\b/i.test(value)) return 'learning';
-  if (/\b(health|sleep|rest|exercise|gym|food|energy|tired|stress|wellbeing)\b/i.test(value)) return 'wellbeing';
+  if (/\b(health|sleep|rest|exercise|gym|food|energy|tired|stress|wellbeing|lazy|unmotivated|procrastinat)\b/i.test(value)) return 'wellbeing';
   if (/\b(travel|trip|city|country|commute|relocate|visit)\b|\bmove\s+(?:to|from|house|city|country|abroad)\b/i.test(value)) return 'location';
   return 'daily life';
 }
@@ -341,7 +390,10 @@ function makeScenario(question: string, constraints: string, data: AppData, exis
     (4 - levelScore(path.metrics.time)) +
     (4 - levelScore(path.metrics.energy))
   );
-  const recommendedIndex = points[0] >= points[1] ? 0 : 1;
+  const recommendedIndex = points[0] === points[1]
+    ? (levelScore(paths[0].metrics.risk) + levelScore(paths[0].metrics.time) + levelScore(paths[0].metrics.energy) <=
+      levelScore(paths[1].metrics.risk) + levelScore(paths[1].metrics.time) + levelScore(paths[1].metrics.energy) ? 0 : 1)
+    : (points[0] > points[1] ? 0 : 1);
   const recommendedPath = paths[recommendedIndex].title;
   const relevantFacts = [
     routine && `your routine (${routine})`,
@@ -353,6 +405,15 @@ function makeScenario(question: string, constraints: string, data: AppData, exis
     openTasks.length > 0 && `${openTasks.length} unfinished quest${openTasks.length === 1 ? '' : 's'}`,
   ].filter(Boolean) as string[];
   const explanation = `The comparison uses the two options in your wording, then weighs their relative time, energy, risk and overlap with details you have allowed. ${relevantFacts.length ? `Relevant details: ${relevantFacts.join('; ')}.` : 'You have not allowed profile details for this comparison, so the paths are based on the situation and constraints you typed.'} The recommended path scores better on that qualitative trade-off, not on a calculated chance of success.`;
+  const recommendedMetrics = paths[recommendedIndex].metrics;
+  const otherMetrics = paths[1 - recommendedIndex].metrics;
+  const recommendationReason = levelScore(recommendedMetrics.risk) < levelScore(otherMetrics.risk)
+    ? 'I’d start here because it looks like the lower-risk option from the details available.'
+    : levelScore(recommendedMetrics.time) + levelScore(recommendedMetrics.energy) < levelScore(otherMetrics.time) + levelScore(otherMetrics.energy)
+      ? 'I’d start here because it looks more manageable on time and energy.'
+      : levelScore(recommendedMetrics.fit) > levelScore(otherMetrics.fit)
+        ? 'I’d lean this way because it appears closer to the goals and preferences you have shared.'
+        : 'I’d lean this way based on the overall balance of the two paths. This is a qualitative suggestion, not a prediction.';
   const evidenceCount = enabled.length + (constraints.trim() ? 1 : 0) + (choices.explicit ? 1 : 0);
   const confidenceLevel: Confidence = evidenceCount >= 5 ? 'Medium' : 'Low';
   const analysisSummary = `This is a ${area} decision: “${choices.one}” compared with “${choices.two}.” The chart shows relative demands and fit; it does not predict a percentage chance of either outcome.`;
@@ -366,6 +427,7 @@ function makeScenario(question: string, constraints: string, data: AppData, exis
     choiceOne: choices.explicit ? choices.one : '',
     choiceTwo: choices.explicit ? choices.two : '',
     recommendedPath,
+    recommendationReason,
     confidenceLevel,
     explanation,
     assumptions: [
@@ -403,18 +465,16 @@ function TradeoffGraph({ paths }: { paths: ScenarioPath[] }) {
   </section>;
 }
 function ScenarioPage({ data, update }: { data: AppData; update: (next: AppData) => void }) {
-  const [question, setQuestion] = useState(''); const [constraints, setConstraints] = useState('');
-  const [choiceOne, setChoiceOne] = useState(''); const [choiceTwo, setChoiceTwo] = useState(''); const [formError, setFormError] = useState('');
+  const [question, setQuestion] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [feedbackScenario, setFeedbackScenario] = useState<string | null>(null); const [actual, setActual] = useState(''); const [correction, setCorrection] = useState('');
   const current = data.scenarios.find((scenario) => scenario.id === selected) ?? data.scenarios[data.scenarios.length - 1];
   const run = (event: FormEvent) => {
     event.preventDefault();
     if (!question.trim()) return;
-    if (Boolean(choiceOne.trim()) !== Boolean(choiceTwo.trim())) { setFormError('Add both options, or leave both blank and include them in your question.'); return; }
-    const scenario = makeScenario(question, constraints, data, undefined, choiceOne, choiceTwo);
+    const scenario = makeScenario(question, '', data);
     update({ ...data, scenarios: [...data.scenarios, scenario] });
-    setSelected(scenario.id); setQuestion(''); setConstraints(''); setChoiceOne(''); setChoiceTwo(''); setFormError('');
+    setSelected(scenario.id); setQuestion('');
   };
   const rerun = (scenario: Scenario) => {
     const refreshed = makeScenario(scenario.question, scenario.constraints, data, scenario, scenario.choiceOne ?? '', scenario.choiceTwo ?? '');
@@ -429,18 +489,10 @@ function ScenarioPage({ data, update }: { data: AppData; update: (next: AppData)
     update({ ...data, feedback: [...data.feedback, feedback], memories: prior ? data.memories.map((item) => item.id === prior.id ? memory : item) : [...data.memories, memory] });
     setFeedbackScenario(null); setActual(''); setCorrection('');
   };
-  return <div><SectionHead index="03" eyebrow="THE WHAT-IF GATE" title="Two roads. No crystal ball." description="Describe a real choice and the limits that matter. Your twin compares the paths against details you have allowed, then shows how it reached its suggestion." />
-    <Dialogue>These are possibilities, not promises. Spell out both options and the real trade-offs when you can; a clear comparison is more useful than a confident-sounding guess.</Dialogue>
+  return <div>
     <form className="scenario-form pixel-panel" onSubmit={run}>
-      <div className="editor-heading"><span className="card-kicker">SET THE SCENE</span><span className="scenario-glyph">◆ ◆</span></div>
-      <label className="field"><span>WHAT ARE YOU THINKING ABOUT?</span><textarea value={question} onChange={(e) => { setQuestion(e.target.value); setFormError(''); }} placeholder="What choice are you weighing? Include a little context if it matters." rows={3} required data-testid="input-scenario-question" /></label>
-      <div className="choice-fields">
-        <label className="field"><span>OPTION A <em>OPTIONAL</em></span><input value={choiceOne} onChange={(e) => { setChoiceOne(e.target.value); setFormError(''); }} placeholder="e.g. take the new role" data-testid="input-scenario-option-a" /></label>
-        <label className="field"><span>OPTION B <em>OPTIONAL</em></span><input value={choiceTwo} onChange={(e) => { setChoiceTwo(e.target.value); setFormError(''); }} placeholder="e.g. stay where I am" data-testid="input-scenario-option-b" /></label>
-      </div>
-      <label className="field"><span>WHAT LIMITS OR TRADE-OFFS MATTER? <em>OPTIONAL</em></span><textarea value={constraints} onChange={(e) => setConstraints(e.target.value)} placeholder="Time, money, energy, other people, timing — anything you want this to respect." rows={2} data-testid="input-scenario-constraints" /></label>
-      {formError && <p className="scenario-form-error" role="alert">{formError}</p>}
-      <div className="scenario-submit"><span><i className="lock-mark" /> Local comparison · no AI service call. Uses details you allow.</span><button className="button button-accent" type="submit" data-testid="button-run-scenario">COMPARE THE PATHS <span>→</span></button></div>
+      <label className="field"><span>WHAT IF?</span><textarea value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="What are you thinking about?" rows={4} required data-testid="input-scenario-question" /></label>
+      <div className="scenario-submit"><button className="button button-accent" type="submit" data-testid="button-run-scenario">SHOW ME TWO PATHS <span>→</span></button></div>
     </form>
     {current && <section className="scenario-result enter-up"><div className="result-heading"><div><div className="eyebrow"><span className="eyebrow-mark">PATHS</span> A POSSIBLE WALK-THROUGH</div><h2>{current.question}</h2></div><div className={`confidence confidence-${current.confidenceLevel.toLowerCase()}`}><span>CONTEXT SIGNAL</span><b>{current.confidenceLevel}</b><small>not a success chance</small></div></div>
       {current.analysisSummary && <p className="analysis-summary">{current.analysisSummary}</p>}
@@ -453,7 +505,7 @@ function ScenarioPage({ data, update }: { data: AppData; update: (next: AppData)
         <div className="path-detail"><span>TRADE-OFF</span><p>{path.tradeoff}</p></div>
         <div className="path-first-step"><span>FIRST SMALL STEP</span><p>{path.firstStep}</p></div>
       </article>)}</div> : <div className="paths-grid">{current.alternatives.map((alternative, index) => <article className="path-card" key={`${current.id}-${index}`}><div className="path-index">PATH {index === 0 ? 'A' : 'B'} <span>{index === 0 ? '◆' : '◇'}</span></div><p>{alternative}</p></article>)}</div>}
-      <div className="recommendation pixel-panel"><div className="recommend-icon">→</div><div><div className="card-kicker">THE VILLAGER'S RECOMMENDED PATH</div><p>{current.recommendedPath}</p></div></div>
+      <div className="recommendation pixel-panel"><div className="recommend-icon">→</div><div><div className="card-kicker">YOUR TWIN'S PREFERRED PATH</div><p>{current.recommendedPath}</p>{current.recommendationReason && <span className="recommendation-reason">{current.recommendationReason}</span>}</div></div>
       <details className="working-details"><summary>SHOW THE WORKING <span>+</span></summary><div className="working-body"><h3>Why this fits your context</h3><p>{current.explanation}</p><h3>Assumptions to keep in mind</h3><ul>{current.assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul><p className="not-prediction">A possible outcome—not a guaranteed prediction. You know your situation best.</p></div></details>
       <div className="result-actions"><button className="button button-outline" onClick={() => rerun(current)} data-testid="button-rerun-scenario">↻ RERUN WITH WHAT YOUR TWIN KNOWS NOW</button><button className="button button-quiet" onClick={() => { setFeedbackScenario(current.id); document.getElementById('feedback-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>TELL YOUR TWIN HOW IT WENT</button></div>
       {feedbackScenario === current.id && <form className="feedback-form pixel-panel" id="feedback-form" onSubmit={saveFeedback}><div className="editor-heading"><span className="card-kicker">A NOTE FOR NEXT TIME</span><button className="close-text" type="button" onClick={() => setFeedbackScenario(null)}>CLOSE ×</button></div><p>What happened in real life? What did the walk-through miss? Your correction becomes an editable memory and can shape the next rerun.</p><label className="field"><span>WHAT ACTUALLY HAPPENED? <em>OPTIONAL</em></span><textarea value={actual} onChange={(e) => setActual(e.target.value)} rows={2} placeholder="A few words about how it played out." data-testid="input-feedback-outcome" /></label><label className="field"><span>WHAT SHOULD YOUR TWIN REMEMBER? <em>OPTIONAL</em></span><textarea value={correction} onChange={(e) => setCorrection(e.target.value)} rows={2} placeholder="For example: I need more recovery time than I expect." data-testid="input-feedback-correction" /></label><button className="button button-primary" type="submit">SAVE CORRECTION <span>→</span></button></form>}
