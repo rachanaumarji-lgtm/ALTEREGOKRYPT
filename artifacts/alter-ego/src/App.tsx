@@ -1,5 +1,5 @@
 import './alter-ego.css';
-import { type FormEvent, type ReactNode, useState } from 'react';
+import { type FormEvent, type ReactNode, useEffect, useState } from 'react';
 import { Link, Route, Switch, useLocation } from 'wouter';
 
 type Profile = {
@@ -115,7 +115,7 @@ function Shell({ children, data }: { children: ReactNode; data: AppData }) {
       </nav>
       <div className="rail-bottom">
         <div className="rail-villager"><PixelVillager small /><span className="pixel-speech">Ready when<br />you are.</span></div>
-        <p>NO CLOUD. NO CROWD.<br />JUST YOUR OWN WORLD.</p>
+        <p>LOCAL SAVE. GEMINI BY REQUEST.<br />JUST YOUR OWN WORLD.</p>
         <span className="local-chip"><i /> SAVED IN THIS BROWSER</span>
       </div>
     </aside>
@@ -438,6 +438,53 @@ function makeScenario(question: string, constraints: string, data: AppData, exis
     createdAt: new Date().toISOString(),
   };
 }
+async function analyzeScenario(question: string, data: AppData, existing?: Scenario): Promise<Scenario> {
+  const context = data.memories
+    .filter((memory) => memory.enabled && data.permissions[memory.category])
+    .map(({ category, label, value }) => ({ category, label, value }));
+  const openTasks = data.permissions.tasks
+    ? data.tasks.filter((task) => !task.done).map(({ title, details }) => ({ title, details }))
+    : [];
+  const response = await fetch('/api/scenarios/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      question,
+      constraints: existing?.constraints ?? '',
+      context,
+      openTasks,
+    }),
+  });
+  const result: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const message = typeof result === 'object' && result !== null && 'error' in result && typeof result.error === 'string'
+      ? result.error
+      : 'Scenario analysis is temporarily unavailable. Please try again.';
+    throw new Error(message);
+  }
+  if (
+    typeof result !== 'object' ||
+    result === null ||
+    !('paths' in result) ||
+    !Array.isArray(result.paths) ||
+    result.paths.length !== 2
+  ) {
+    throw new Error('Gemini returned an incomplete analysis. Please try again.');
+  }
+  const analysis = result as Scenario;
+  const paths = analysis.paths as ScenarioPath[];
+  return {
+    ...analysis,
+    paths,
+    id: existing?.id ?? id(),
+    question: question.trim(),
+    constraints: existing?.constraints ?? '',
+    alternatives: paths.map((path) => `${path.action}: ${path.likelyOutcome}`),
+    choiceOne: existing?.choiceOne ?? '',
+    choiceTwo: existing?.choiceTwo ?? '',
+    createdAt: existing?.createdAt ?? new Date().toISOString(),
+  };
+}
 function TradeoffGraph({ paths }: { paths: ScenarioPath[] }) {
   const metrics: { key: keyof ScenarioPath['metrics']; label: string; note: string }[] = [
     { key: 'time', label: 'Time demand', note: 'Lower is lighter' },
@@ -468,17 +515,47 @@ function ScenarioPage({ data, update }: { data: AppData; update: (next: AppData)
   const [question, setQuestion] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
   const [feedbackScenario, setFeedbackScenario] = useState<string | null>(null); const [actual, setActual] = useState(''); const [correction, setCorrection] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState('');
+  const [geminiConfigured, setGeminiConfigured] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    fetch('/api/scenarios/status')
+      .then((response) => response.ok ? response.json() : null)
+      .then((result: unknown) => {
+        if (active && typeof result === 'object' && result !== null && 'configured' in result) {
+          setGeminiConfigured(result.configured === true);
+        }
+      })
+      .catch(() => { if (active) setGeminiConfigured(false); });
+    return () => { active = false; };
+  }, []);
   const current = data.scenarios.find((scenario) => scenario.id === selected) ?? data.scenarios[data.scenarios.length - 1];
-  const run = (event: FormEvent) => {
+  const run = async (event: FormEvent) => {
     event.preventDefault();
-    if (!question.trim()) return;
-    const scenario = makeScenario(question, '', data);
-    update({ ...data, scenarios: [...data.scenarios, scenario] });
-    setSelected(scenario.id); setQuestion('');
+    if (!question.trim() || isAnalyzing) return;
+    setIsAnalyzing(true); setAnalysisError('');
+    try {
+      const scenario = await analyzeScenario(question, data);
+      update({ ...data, scenarios: [...data.scenarios, scenario] });
+      setSelected(scenario.id); setQuestion('');
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : 'Scenario analysis failed. Please try again.');
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
-  const rerun = (scenario: Scenario) => {
-    const refreshed = makeScenario(scenario.question, scenario.constraints, data, scenario, scenario.choiceOne ?? '', scenario.choiceTwo ?? '');
-    update({ ...data, scenarios: data.scenarios.map((item) => item.id === scenario.id ? refreshed : item) }); setSelected(scenario.id);
+  const rerun = async (scenario: Scenario) => {
+    if (isAnalyzing) return;
+    setIsAnalyzing(true); setAnalysisError('');
+    try {
+      const refreshed = await analyzeScenario(scenario.question, data, scenario);
+      update({ ...data, scenarios: data.scenarios.map((item) => item.id === scenario.id ? refreshed : item) }); setSelected(scenario.id);
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : 'Scenario analysis failed. Please try again.');
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
   const saveFeedback = (event: FormEvent) => {
     event.preventDefault(); if (!actual.trim() && !correction.trim()) return;
@@ -490,13 +567,19 @@ function ScenarioPage({ data, update }: { data: AppData; update: (next: AppData)
     setFeedbackScenario(null); setActual(''); setCorrection('');
   };
   return <div>
+    <SectionHead index="03" eyebrow="YOUR WHAT-IF GATE" title="Explore two real paths." description="Gemini will analyze your exact question and compare two distinct, practical options using only the context you have allowed." />
+    <Dialogue>Tell me the situation as it is. I’ll make the options specific to your question and show where important unknowns remain.</Dialogue>
+    <div className={`gemini-status ${geminiConfigured ? 'is-ready' : ''}`} role="status">
+      <span className="gemini-status-mark" aria-hidden="true">{geminiConfigured === null ? '…' : geminiConfigured ? '✓' : '!'}</span>
+      <div><b>GEMINI SCENARIO ANALYSIS</b><p>{geminiConfigured === null ? 'Checking secure key setup…' : geminiConfigured ? 'API key is stored securely on the server.' : 'Add GEMINI_API_KEY using Replit’s secure Secrets form to enable analysis.'}</p></div>
+    </div>
     <form className="scenario-form pixel-panel" onSubmit={run}>
-      <label className="field"><span>WHAT IF?</span><textarea value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="What are you thinking about?" rows={4} required data-testid="input-scenario-question" /></label>
-      <div className="scenario-submit"><button className="button button-accent" type="submit" data-testid="button-run-scenario">SHOW ME TWO PATHS <span>→</span></button></div>
+      <label className="field"><span>WHAT IF?</span><textarea value={question} onChange={(e) => setQuestion(e.target.value)} placeholder="Include the choice, what matters to you, and any limits or worries…" rows={4} maxLength={2000} required data-testid="input-scenario-question" /><small>{question.length} / 2000 characters. Only details enabled in Privacy settings are sent with this question for analysis.</small></label>
+      {analysisError && <p className="analysis-error" role="alert">{analysisError}</p>}
+      <div className="scenario-submit"><button className="button button-accent" type="submit" disabled={isAnalyzing} data-testid="button-run-scenario">{isAnalyzing ? 'ANALYZING YOUR WHAT-IF…' : <>SHOW ME TWO PATHS <span>→</span></>}</button><span>Question + enabled context go to Gemini for this analysis.</span></div>
     </form>
     {current && <section className="scenario-result enter-up"><div className="result-heading"><div><div className="eyebrow"><span className="eyebrow-mark">PATHS</span> A POSSIBLE WALK-THROUGH</div><h2>{current.question}</h2></div><div className={`confidence confidence-${current.confidenceLevel.toLowerCase()}`}><span>CONTEXT SIGNAL</span><b>{current.confidenceLevel}</b><small>not a success chance</small></div></div>
       {current.analysisSummary && <p className="analysis-summary">{current.analysisSummary}</p>}
-      {current.paths?.length === 2 && <TradeoffGraph paths={current.paths} />}
       {current.paths?.length === 2 ? <div className="paths-grid">{current.paths.map((path, index) => <article className={`path-card path-detail-card path-card-${index}`} key={`${current.id}-${index}`}>
         <div className="path-index">PATH {index === 0 ? 'A' : 'B'} <span>{index === 0 ? '◆' : '◇'}</span></div>
         <h3>{path.action}</h3>
@@ -505,9 +588,10 @@ function ScenarioPage({ data, update }: { data: AppData; update: (next: AppData)
         <div className="path-detail"><span>TRADE-OFF</span><p>{path.tradeoff}</p></div>
         <div className="path-first-step"><span>FIRST SMALL STEP</span><p>{path.firstStep}</p></div>
       </article>)}</div> : <div className="paths-grid">{current.alternatives.map((alternative, index) => <article className="path-card" key={`${current.id}-${index}`}><div className="path-index">PATH {index === 0 ? 'A' : 'B'} <span>{index === 0 ? '◆' : '◇'}</span></div><p>{alternative}</p></article>)}</div>}
+      {current.paths?.length === 2 && <TradeoffGraph paths={current.paths} />}
       <div className="recommendation pixel-panel"><div className="recommend-icon">→</div><div><div className="card-kicker">YOUR TWIN'S PREFERRED PATH</div><p>{current.recommendedPath}</p>{current.recommendationReason && <span className="recommendation-reason">{current.recommendationReason}</span>}</div></div>
       <details className="working-details"><summary>SHOW THE WORKING <span>+</span></summary><div className="working-body"><h3>Why this fits your context</h3><p>{current.explanation}</p><h3>Assumptions to keep in mind</h3><ul>{current.assumptions.map((item, index) => <li key={index}>{item}</li>)}</ul><p className="not-prediction">A possible outcome—not a guaranteed prediction. You know your situation best.</p></div></details>
-      <div className="result-actions"><button className="button button-outline" onClick={() => rerun(current)} data-testid="button-rerun-scenario">↻ RERUN WITH WHAT YOUR TWIN KNOWS NOW</button><button className="button button-quiet" onClick={() => { setFeedbackScenario(current.id); document.getElementById('feedback-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>TELL YOUR TWIN HOW IT WENT</button></div>
+      <div className="result-actions"><button className="button button-outline" onClick={() => void rerun(current)} disabled={isAnalyzing} data-testid="button-rerun-scenario">{isAnalyzing ? 'UPDATING…' : '↻ RERUN WITH WHAT YOUR TWIN KNOWS NOW'}</button><button className="button button-quiet" onClick={() => { setFeedbackScenario(current.id); document.getElementById('feedback-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' }); }}>TELL YOUR TWIN HOW IT WENT</button></div>
       {feedbackScenario === current.id && <form className="feedback-form pixel-panel" id="feedback-form" onSubmit={saveFeedback}><div className="editor-heading"><span className="card-kicker">A NOTE FOR NEXT TIME</span><button className="close-text" type="button" onClick={() => setFeedbackScenario(null)}>CLOSE ×</button></div><p>What happened in real life? What did the walk-through miss? Your correction becomes an editable memory and can shape the next rerun.</p><label className="field"><span>WHAT ACTUALLY HAPPENED? <em>OPTIONAL</em></span><textarea value={actual} onChange={(e) => setActual(e.target.value)} rows={2} placeholder="A few words about how it played out." data-testid="input-feedback-outcome" /></label><label className="field"><span>WHAT SHOULD YOUR TWIN REMEMBER? <em>OPTIONAL</em></span><textarea value={correction} onChange={(e) => setCorrection(e.target.value)} rows={2} placeholder="For example: I need more recovery time than I expect." data-testid="input-feedback-correction" /></label><button className="button button-primary" type="submit">SAVE CORRECTION <span>→</span></button></form>}
     </section>}
     {data.scenarios.length > 1 && <div className="scenario-history"><span className="card-kicker">YOUR EARLIER WHAT-IFS</span>{[...data.scenarios].reverse().slice(1).map((scenario) => <button key={scenario.id} className={`history-item ${selected === scenario.id ? 'current' : ''}`} onClick={() => setSelected(scenario.id)}><span>{new Date(scenario.createdAt).toLocaleDateString()}</span><b>{scenario.question}</b><span>OPEN →</span></button>)}</div>}
@@ -533,13 +617,27 @@ function EvolutionPage({ data, update }: { data: AppData; update: (next: AppData
   const [nextValue, setNextValue] = useState(memory?.value ?? '');
   const [saved, setSaved] = useState(false);
   const [rerunId, setRerunId] = useState('');
+  const [rerunning, setRerunning] = useState(false);
+  const [analysisError, setAnalysisError] = useState('');
   const save = (event: FormEvent) => { event.preventDefault(); const updated: Memory = { id: memory?.id ?? id(), category: 'feedback', label: 'What experience taught me', value: nextValue.trim(), enabled: true }; update({ ...data, memories: [...data.memories.filter((item) => item.category !== 'feedback'), ...(nextValue.trim() ? [updated] : [])] }); setSaved(true); };
-  const rerun = (scenario: Scenario) => { const refreshed = makeScenario(scenario.question, scenario.constraints, data, scenario, scenario.choiceOne ?? '', scenario.choiceTwo ?? ''); update({ ...data, scenarios: data.scenarios.map((item) => item.id === scenario.id ? refreshed : item) }); setRerunId(scenario.id); };
+  const rerun = async (scenario: Scenario) => {
+    if (rerunning) return;
+    setRerunning(true); setAnalysisError('');
+    try {
+      const refreshed = await analyzeScenario(scenario.question, data, scenario);
+      update({ ...data, scenarios: data.scenarios.map((item) => item.id === scenario.id ? refreshed : item) });
+      setRerunId(scenario.id);
+    } catch (error) {
+      setAnalysisError(error instanceof Error ? error.message : 'Scenario analysis failed. Please try again.');
+    } finally {
+      setRerunning(false);
+    }
+  };
   return <div><SectionHead index="05" eyebrow="EVOLUTION / FIELD NOTES" title="Real life is the best patch note." description="When a what-if meets the real world, tell your twin what it got wrong. A useful correction can change what it recommends next time." />
     <Dialogue>I'm allowed to be wrong. The important bit is whether I remember what you tell me afterward.</Dialogue>
     <div className="evolution-layout"><section className="evolution-card pixel-panel"><div className="card-kicker">YOUR CURRENT CORRECTION</div><h2>What should your twin keep in mind?</h2><p>This one memory can be revised or removed at any time. It only shapes scenarios while the Corrections permission is on.</p><form onSubmit={save}><label className="field"><span>REMEMBER THIS ABOUT MY EXPERIENCE</span><textarea value={nextValue} onChange={(e) => { setNextValue(e.target.value); setSaved(false); }} rows={4} placeholder="For instance: I tend to underestimate the recovery time after a busy week." data-testid="input-evolution-memory" /><small>Feedback from a scenario is also saved here automatically. Edit it in your own words.</small></label><button className="button button-primary" type="submit">SAVE MEMORY CHANGE <span>→</span></button>{saved && <span className="save-confirm" role="status">Saved in your browser. Your next rerun can use this.</span>}</form></section>
       <aside className="evolution-side"><div className="old-new"><span className="card-kicker">MEMORY, MADE VISIBLE</span><div className="memory-change"><small>BEFORE / THIS WAS ON THE MAP</small><p>{memory?.value || 'No correction saved yet.'}</p></div><div className="change-arrow">↓</div><div className="memory-change memory-new"><small>NOW / YOUR TWIN WILL USE</small><p>{nextValue || 'No correction saved yet.'}</p></div></div><div className="feedback-log"><span className="card-kicker">REAL-WORLD NOTES</span>{data.feedback.length ? [...data.feedback].reverse().map((item) => <article key={item.id}><small>{new Date(item.createdAt).toLocaleDateString()}</small><b>{data.scenarios.find((scenario) => scenario.id === item.scenarioId)?.question ?? 'Earlier what-if'}</b><p>{item.actualOutcome || item.correction}</p></article>) : <p className="empty-quiet">No real-world notes yet. Add one from a scenario walk-through.</p>}</div></aside></div>
-    <section className="rerun-panel"><div><span className="card-kicker">PUT THE NEW MEMORY TO WORK</span><h2>Revisit an old what-if.</h2><p>Rerun a saved scenario with your current profile and enabled memories.</p></div>{data.scenarios.length ? <div className="rerun-list">{data.scenarios.slice().reverse().map((scenario) => <div className="rerun-item" key={scenario.id}><span>{scenario.question}</span><button className="button button-outline" onClick={() => rerun(scenario)} data-testid={`button-evolution-rerun-${scenario.id}`}>{rerunId === scenario.id ? 'UPDATED ✓' : 'RERUN →'}</button></div>)}</div> : <div className="quiet-box">You haven't saved a what-if yet. Write one in <Link href="/scenarios">the scenario gate →</Link></div>}</section>
+    <section className="rerun-panel"><div><span className="card-kicker">PUT THE NEW MEMORY TO WORK</span><h2>Revisit an old what-if.</h2><p>Rerun a saved scenario with your current profile and enabled memories.</p></div>{analysisError && <p className="analysis-error" role="alert">{analysisError}</p>}{data.scenarios.length ? <div className="rerun-list">{data.scenarios.slice().reverse().map((scenario) => <div className="rerun-item" key={scenario.id}><span>{scenario.question}</span><button className="button button-outline" onClick={() => void rerun(scenario)} disabled={rerunning} data-testid={`button-evolution-rerun-${scenario.id}`}>{rerunning ? 'ANALYZING…' : rerunId === scenario.id ? 'UPDATED ✓' : 'RERUN →'}</button></div>)}</div> : <div className="quiet-box">You haven't saved a what-if yet. Write one in <Link href="/scenarios">the scenario gate →</Link></div>}</section>
   </div>;
 }
 function PrivacyPage({ data, update, reset }: { data: AppData; update: (next: AppData) => void; reset: () => void }) {
@@ -547,9 +645,9 @@ function PrivacyPage({ data, update, reset }: { data: AppData; update: (next: Ap
   const togglePermission = (category: Category, enabled: boolean) => update({ ...data, permissions: { ...data.permissions, [category]: enabled } });
   const removeMemory = (memory: Memory) => { if (window.confirm(`Delete the remembered detail “${memory.label}”?`)) update({ ...data, memories: data.memories.filter((item) => item.id !== memory.id) }); };
   const saveMemory = (memory: Memory) => { update({ ...data, memories: data.memories.map((item) => item.id === memory.id ? { ...item, value: draft } : item) }); setEditingId(null); };
-  return <div><SectionHead index="06" eyebrow="PRIVACY & CONTROL" title="Your world stays on this device." description="Alter Ego doesn't use a network, account, or server. Everything below lives in this browser's local storage." />
+  return <div><SectionHead index="06" eyebrow="PRIVACY & CONTROL" title="Your save stays on this device." description="Your profile and history live in this browser. Scenario analysis makes a secure server request to Gemini only when you submit or rerun a what-if." />
     <Dialogue>You're the gatekeeper. Turn a category off to keep it out of scenario suggestions, edit a memory to correct it, or clear the whole save file.</Dialogue>
-    <div className="privacy-notice pixel-panel"><div className="notice-lock">LOCAL<br />ONLY</div><div><span className="card-kicker">BROWSER-LOCAL STORAGE</span><p>Your profile, quest log, scenarios, feedback, and memories are saved on this device in this browser. Clearing browser data can remove them. Nothing is sent to a server.</p><Link href="/twin">Review your profile →</Link></div></div>
+    <div className="privacy-notice pixel-panel"><div className="notice-lock">LOCAL<br />SAVE</div><div><span className="card-kicker">LOCAL DATA + GEMINI ANALYSIS</span><p>Your profile, quest log, scenarios, feedback, and memories stay in this browser. When you submit or rerun a what-if, the question and only enabled memories/unfinished tasks are sent through the app server to Google Gemini for analysis. Your Gemini API key stays in Replit Secrets and is never sent to the browser. Turn off categories below to exclude them.</p><Link href="/twin">Review your profile →</Link></div></div>
     <section className="permission-section"><div className="privacy-heading"><div><span className="card-kicker">CATEGORY PERMISSIONS</span><h2>What may your twin use?</h2></div><span className="permission-count">{Object.values(data.permissions).filter(Boolean).length} / {categories.length} ON</span></div>{categories.map((category) => <label key={category.key} className="permission-row"><div><b>{category.label}</b><small>{category.hint}</small></div><input type="checkbox" checked={data.permissions[category.key]} onChange={(e) => togglePermission(category.key, e.target.checked)} data-testid={`toggle-permission-${category.key}`} /><span className="toggle-track" aria-hidden="true"><i /></span></label>)}</section>
     <section className="memory-section"><div className="privacy-heading"><div><span className="card-kicker">MEMORY CABINET</span><h2>Look at what's remembered.</h2></div><span className="permission-count">{data.memories.length} DETAILS</span></div>{data.memories.length ? <div className="memory-list">{data.memories.map((memory) => <article key={memory.id} className={`memory-row ${!memory.enabled || !data.permissions[memory.category] ? 'memory-paused' : ''}`}><div className="memory-indicator">{memory.enabled && data.permissions[memory.category] ? 'IN USE' : 'PAUSED'}</div><div className="memory-content"><span>{memory.label} <small>· {categories.find((category) => category.key === memory.category)?.label}</small></span>{editingId === memory.id ? <div className="memory-edit"><textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={2} data-testid={`input-memory-${memory.id}`} /><button onClick={() => saveMemory(memory)}>SAVE</button><button onClick={() => setEditingId(null)}>CANCEL</button></div> : <p>{memory.value}</p>}</div><div className="memory-actions">{editingId !== memory.id && <><button onClick={() => { setEditingId(memory.id); setDraft(memory.value); }} data-testid={`button-edit-memory-${memory.id}`}>EDIT</button><button onClick={() => removeMemory(memory)} data-testid={`button-delete-memory-${memory.id}`}>DELETE</button><button onClick={() => update({ ...data, memories: data.memories.map((item) => item.id === memory.id ? { ...item, enabled: !item.enabled } : item) })}>{memory.enabled ? 'PAUSE' : 'USE'}</button></>}</div></article>)}</div> : <div className="quiet-box">No stored memories yet. Memories come from the profile details you share and corrections you choose to keep.</div>}</section>
     <section className="reset-zone"><div><span className="card-kicker">START OVER</span><h2>Clear your local save.</h2><p>This removes your profile, quests, scenarios, feedback, memories, and permissions from this browser. This cannot be undone.</p></div>{confirm ? <div className="confirm-reset"><b>Clear everything from this browser?</b><button className="button button-danger" onClick={reset} data-testid="button-confirm-reset">YES, CLEAR THE SAVE</button><button className="button button-quiet" onClick={() => setConfirm(false)}>KEEP MY SAVE</button></div> : <button className="button button-danger-outline" onClick={() => setConfirm(true)} data-testid="button-reset-data">CLEAR ALL LOCAL DATA</button>}</section>

@@ -204,7 +204,17 @@ h1,h2,h3,p { margin-top:0; }
 .scenario-form .field+.field { margin-top:14px; }
 .scenario-glyph { color:#d18a4b; font:11px var(--mono); letter-spacing:.2em; }
 .scenario-form .field textarea { min-height:132px; padding:15px; font-size:15px; }
+.scenario-form .field small { display:block; margin-top:2px; }
 .scenario-submit { display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-top:16px; }
+.scenario-submit>span { max-width:250px; font-size:9px; line-height:1.5; }
+.scenario-submit .button:disabled,.result-actions .button:disabled,.rerun-item .button:disabled { opacity:.65; cursor:wait; }
+.gemini-status { display:flex; align-items:center; gap:11px; margin:0 0 12px; padding:11px 13px; border:1px solid #d7cba9; background:#f3ead2; }
+.gemini-status-mark { width:25px; height:25px; flex:0 0 25px; display:grid; place-items:center; background:#a96743; color:#fff5dc; font:12px var(--mono); }
+.gemini-status.is-ready { border-color:#bfd0b5; background:#e6eddb; }
+.gemini-status.is-ready .gemini-status-mark { background:#527758; }
+.gemini-status b { display:block; color:#45624e; font:8px var(--mono); letter-spacing:.08em; }
+.gemini-status p { margin:3px 0 0; color:#778172; font-size:10px; line-height:1.45; }
+.analysis-error { margin:13px 0 0; padding:11px 13px; border-left:3px solid #ac4e3e; background:#f4e3d7; color:#8d3d32; font-size:12px; line-height:1.55; }
 .scenario-result { margin-top:29px; }
 .result-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:22px; margin-bottom:17px; }
 .result-heading h2 { max-width:660px; margin:10px 0 0; color:#315746; font:600 26px/1.25 var(--serif); }
@@ -457,4 +467,12 @@ h1,h2,h3,p { margin-top:0; }
   .tradeoff-row { grid-template-columns:1fr; gap:8px; }
   .tradeoff-bar-row { grid-template-columns:23px minmax(0,1fr) 55px; }
   .path-detail-card { gap:10px; }
+  .scenario-submit { align-items:stretch; flex-direction:column; }
+  .scenario-submit>span { max-width:none; }
+}
+
+@media (hover:hover) and (pointer:fine) {
+  :is(html,body,button,a,summary,[role="button"]) {
+    cursor:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32' shape-rendering='crispEdges'%3E%3Cpath fill='%232b3936' d='M22 1h8v8h-4v5h-4v4h-4v4h-4v4H9v3H1v-8h3v-4h4v-4h4v-4h4V5h6z'/%3E%3Cpath fill='%239bcbd7' d='M23 3h5v4h-4v4h-4v4h-4v4h-4v4h-3v-3h3v-4h4v-4h4v-4h4z'/%3E%3Cpath fill='%234d96aa' d='M22 7h4v4h-4v4h-4v4h-4v4h-3v-3h3v-4h4v-4h4z'/%3E%3Cpath fill='%23d6ae66' d='M7 21h4v4h-4zM4 24h4v4H4zM2 27h4v3H2z'/%3E%3Cpath fill='%23534135' d='M7 20h4v2H7zM3 23h5v2H3zM1 26h5v2H1z'/%3E%3Cpath fill='%23e3c477' d='M5 16h2v8H5zM2 23h8v2H2z'/%3E%3C/svg%3E") 2 2, auto;
+  }
 }
