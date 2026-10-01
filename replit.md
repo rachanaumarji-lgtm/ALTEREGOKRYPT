@@ -1,10 +1,13 @@
-# [Project name]
+# ALTER EGO
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A local-first personal digital twin for setting goals, tracking tasks, and thinking through decisions with optional Gemini chat and scenario analysis.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/alter-ego run dev` — run the web app
+- `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080)
+- Run both managed workflows together so the web app can reach its API at `/api`
+- `GEMINI_API_KEY` — required in Replit Secrets for Gemini chat and scenario analysis
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec

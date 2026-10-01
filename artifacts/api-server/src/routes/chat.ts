@@ -138,10 +138,17 @@ router.post("/chat", async (req, res) => {
     if (!response.ok) {
       // Provider responses may contain request details; keep them out of logs and client errors.
       req.log?.warn({ status: response.status }, "Gemini chat request failed");
+      const error = response.status === 401 || response.status === 403
+        ? "Gemini could not use this key. Check the GEMINI_API_KEY secret and try again."
+        : response.status === 404
+          ? "Gemini could not find the configured model. Check that the model name is available to this API key."
+          : response.status === 429
+            ? "Gemini's usage limit was reached. Wait a bit before trying again."
+            : response.status === 503
+              ? "Google Gemini is temporarily unavailable. Please try again shortly."
+              : "Gemini could not answer right now. Please try again.";
       res.status(502).json({
-        error: response.status === 401 || response.status === 403
-          ? "Gemini could not use this key. Check the GEMINI_API_KEY secret and try again."
-          : "Gemini could not answer right now. Please try again.",
+        error,
       });
       return;
     }
