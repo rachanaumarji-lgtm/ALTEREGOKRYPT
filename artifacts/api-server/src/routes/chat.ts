@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { fetchGeminiWithSingleRetry } from "../lib/gemini";
 
 const router: IRouter = Router();
 
@@ -103,7 +104,7 @@ router.post("/chat", async (req, res) => {
     : "";
 
   try {
-    const response = await fetch(
+    const response = await fetchGeminiWithSingleRetry(
       "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
       {
         method: "POST",
